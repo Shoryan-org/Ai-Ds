@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  shoryan-api:
+    build: .
+    container_name: shoryan-fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      # Set your API keys here, or mount a .env file
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      # Optional: mount local code for development (comment out for production)
+      - ./:/app
+    restart: unless-stopped

@@ -1,11 +1,23 @@
+# Core AI / RAG
 langchain
 langchain-community
 langchain-text-splitters
-
 sentence-transformers
 faiss-cpu
+transformers
+sentencepiece
+sacremoses
+rank_bm25
 
-python-frontmatter
-
+# Utilities
 numpy
 tqdm
+python-frontmatter
+pyyaml
+requests
+tiktoken
+
+# FastAPI Default App (no Gradio needed)
+fastapi
+uvicorn[standard]
+python-multipart
