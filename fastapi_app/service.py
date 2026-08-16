@@ -36,6 +36,8 @@ import os
 import sys
 import uuid
 from typing import Optional
+import joblib
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,9 @@ os.chdir(_PROJECT_ROOT)
 
 _pipeline = None          # GenerationPipeline instance
 _memory = None            # SessionMemory instance (shared across requests)
+_availability_model = joblib.load(
+    os.path.join(_PROJECT_ROOT, "model", "random_forest_model.pkl")
+)
 
 
 def _read_key_from_file(filename: str) -> Optional[str]:
@@ -208,3 +213,40 @@ def ask(message: str, session_id: Optional[str] = None):
     effective_session_id = session_id or str(uuid.uuid4())
 
     return _pipeline.answer(message, session_id=effective_session_id)
+
+def check_availability(users):
+    """
+    Predict blood donation eligibility for a list of users
+    and return only the users predicted as available.
+    """
+
+    available_users = []
+
+    for user in users:
+        user_data = {
+            "Age": user.age,
+            "Total_Donations": user.total_donations,
+            "Weight_kg": user.weight_kg,
+            "Hemoglobin_g_dL": user.hemoglobin_g_dL,
+            "Gender": user.gender,
+            "Blood_Group": user.blood_group,
+            "City": user.city,
+            "State": user.state,
+            "Donation_Center": user.donation_center,
+        }
+
+        df = pd.DataFrame([user_data])
+
+        # Apply the same one-hot encoding used during training
+        df = pd.get_dummies(df, drop_first=True)
+
+        # Make sure the columns match the model's training features
+        expected_columns = _availability_model.feature_names_in_
+        df = df.reindex(columns=expected_columns, fill_value=0)
+
+        prediction = _availability_model.predict(df)[0]
+
+        if prediction == 1:
+            available_users.append(user)
+
+    return available_users
