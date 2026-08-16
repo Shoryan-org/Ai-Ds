@@ -31,8 +31,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from fastapi_app import service
-from fastapi_app.schemas import ChatRequest, ChatResponse, Citation, HealthResponse
-
+from fastapi_app.schemas import from fastapi_app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    Citation,
+    HealthResponse,
+    AvailabilityRequest,
+    AvailabilityResponse,
+)
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -233,3 +239,33 @@ async def chat(request: ChatRequest) -> ChatResponse:
         sources=citations,
         session_id=result.session_id,
     )
+
+@app.post(
+    "/availability",
+    response_model=AvailabilityResponse,
+    summary="Check blood donation availability",
+    tags=["Availability"],
+)
+async def availability(request: AvailabilityRequest) -> AvailabilityResponse:
+    """
+    Receive a list of users and return only the users
+    predicted as eligible for blood donation.
+    """
+
+    try:
+        available_users = service.check_availability(request.users)
+
+        return AvailabilityResponse(
+            available_users=available_users
+        )
+
+    except Exception as exc:
+        logger.error(
+            "Availability prediction failed: %s",
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check blood donation availability.",
+        ) from exc
