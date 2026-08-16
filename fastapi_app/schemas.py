@@ -82,3 +82,23 @@ class HealthResponse(BaseModel):
     """Response returned by GET /health."""
 
     status: str = "ok"
+
+
+class UserAvailabilityRequest(BaseModel):
+    age: int
+    total_donations: int
+    weight_kg: float
+    hemoglobin_g_dL: float
+    gender: str
+    blood_group: str
+    city: str
+    state: str
+    donation_center: str
+
+
+class AvailabilityRequest(BaseModel):
+    users: List[UserAvailabilityRequest]
+
+
+class AvailabilityResponse(BaseModel):
+    available_users: List[UserAvailabilityRequest]
