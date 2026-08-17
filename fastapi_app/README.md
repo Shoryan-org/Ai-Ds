@@ -153,6 +153,7 @@ Predict donor availability for a list of donor profiles.
 {
   "users": [
     {
+      "user_id": "donor-12345",
       "age": 30,
       "total_donations": 2,
       "weight_kg": 72.5,
@@ -175,6 +176,7 @@ Predict donor availability for a list of donor profiles.
   "available_users": [
     {
       "user": {
+        "user_id": "donor-12345",
         "age": 30,
         "total_donations": 2,
         "weight_kg": 72.5,
@@ -205,29 +207,6 @@ The availability prediction uses a fixed probability threshold:
 ```text
 available = true   if probability >= 0.5
 available = false  if probability < 0.5
-```
-
-### Example
-
-```bash
-curl -X POST http://localhost:8000/availability \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"users\": [
-      {
-        \"age\": 30,
-        \"total_donations\": 2,
-        \"weight_kg\": 72.5,
-        \"hemoglobin_g_dL\": 15.0,
-        \"gender\": \"Male\",
-        \"blood_group\": \"O+\",
-        \"city\": \"Cairo\",
-        \"state\": \"Cairo\",
-        \"donation_center\": \"Egyptian Red Crescent\",
-        \"country\": \"Egypt\"
-      }
-    ]
-  }"
 ```
 
 ---
@@ -288,7 +267,7 @@ The providers are checked in the following order:
                     │                │   │                     │
                     │ ask()          │   │ model/              │
                     │ check_         │   │ random_forest_      │
-                    │ availability()│   │ model.pkl           │
+                    │ availability() │   │ model.pkl           │
                     └───────┬────────┘   └─────────────────────┘
                             │
                             ▼
