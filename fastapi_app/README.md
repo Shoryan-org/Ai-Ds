@@ -189,8 +189,11 @@ Predict donor availability for a list of donor profiles.
         "country": "Egypt"
       },
       "available": true,
-      "probability": 0.7408
+      "probability": 0.74219
     }
+  ],
+  "available_ids": [
+    "single-001"
   ],
   "summary": {
     "total_checked": 1,
