@@ -3,8 +3,9 @@ FastAPI application — Shoryan Blood Donation Assistant API.
 
 Endpoints
 ---------
-GET  /health       — liveness check; does NOT re-initialize the pipeline.
-POST /chat         — accepts a user message, returns the chatbot's answer.
+GET  /            — API root with metadata and endpoint information.
+GET  /health      — liveness check; does NOT re-initialize the pipeline.
+POST /chat        — accepts a user message, returns the chatbot's answer.
 POST /availability — accepts a list of donor profiles, returns predicted availability.
 
 The application is deliberately thin:
@@ -151,6 +152,10 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
+# ---------------------------------------------------------------------------
+# Root Endpoint
+# ---------------------------------------------------------------------------
+
 @app.get(
     "/",
     summary="API Root",
@@ -189,6 +194,7 @@ async def root():
                 "request_body": {
                     "users": [
                         {
+                            "user_id": "Optional user identifier",
                             "age": "int (16-100)",
                             "total_donations": "int (≥ 0)",
                             "weight_kg": "float (40-200)",
@@ -210,6 +216,7 @@ async def root():
         },
         "status": "online"
     }
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -312,6 +319,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Availability Prediction Endpoint
+# ---------------------------------------------------------------------------
+
 @app.post(
     "/availability",
     response_model=AvailabilityResponse,
@@ -321,32 +332,33 @@ async def chat(request: ChatRequest) -> ChatResponse:
 async def availability(request: AvailabilityRequest) -> AvailabilityResponse:
     """
     Accepts a list of donor profiles and returns:
-    - The list of users predicted as available, each with their probability.
+    - The list of users predicted as available, each with their probability and user_id.
+    - A simple list of user_ids of available users for easy integration.
     - Optional summary statistics.
-
-    The prediction uses a RandomForest classifier trained on historical donor data.
-
-    **Debug Note**: If you get unexpected predictions (e.g., all unavailable),
-    check the server logs – they will show the probability for each user.
-    This is often due to the model being trained on Indian data; Egyptian
-    locations (Cairo, Alexandria) do not exist in the training set, causing
-    all location features to be 0, which may lead to a lower probability.
     """
     try:
         results = service.check_availability(request.users)
 
-        # Log each prediction for debugging (probabilities and availability)
+        # Log each prediction for debugging
         for r in results:
+            user_id = r.user.user_id or "N/A"
             logger.info(
-                f"Prediction: age={r.user.age}, Hb={r.user.hemoglobin_g_dL}, "
+                f"Prediction: user_id={user_id}, age={r.user.age}, Hb={r.user.hemoglobin_g_dL}, "
                 f"city={r.user.city}, available={r.available}, prob={r.probability:.4f}"
             )
 
         # Filter only available users
         available = [r for r in results if r.available]
 
+        # Extract user IDs of available users (skip None)
+        available_ids = [
+            r.user.user_id for r in available
+            if r.user.user_id is not None
+        ]
+
         return AvailabilityResponse(
             available_users=available,
+            available_ids=available_ids if available_ids else None,
             summary={
                 "total_checked": len(results),
                 "available_count": len(available),
