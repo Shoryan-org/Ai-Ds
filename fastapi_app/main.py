@@ -33,14 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from fastapi_app import service
-from fastapi_app.schemas import (
-    ChatRequest,
-    ChatResponse,
-    Citation,
-    HealthResponse,
-    AvailabilityRequest,
-    AvailabilityResponse,
-)
+from fastapi_app.schemas import ChatRequest, ChatResponse, Citation, HealthResponse
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -310,52 +303,3 @@ async def chat(request: ChatRequest) -> ChatResponse:
         sources=citations,
         session_id=result.session_id,
     )
-
-
-@app.post(
-    "/availability",
-    response_model=AvailabilityResponse,
-    summary="Check blood donation availability for multiple donors",
-    tags=["Availability"],
-)
-async def availability(request: AvailabilityRequest) -> AvailabilityResponse:
-    """
-    Accepts a list of donor profiles and returns:
-    - The list of users predicted as available, each with their probability.
-    - Optional summary statistics.
-
-    The prediction uses a RandomForest classifier trained on historical donor data.
-
-    **Debug Note**: If you get unexpected predictions (e.g., all unavailable),
-    check the server logs – they will show the probability for each user.
-    This is often due to the model being trained on Indian data; Egyptian
-    locations (Cairo, Alexandria) do not exist in the training set, causing
-    all location features to be 0, which may lead to a lower probability.
-    """
-    try:
-        results = service.check_availability(request.users)
-
-        # Log each prediction for debugging (probabilities and availability)
-        for r in results:
-            logger.info(
-                f"Prediction: age={r.user.age}, Hb={r.user.hemoglobin_g_dL}, "
-                f"city={r.user.city}, available={r.available}, prob={r.probability:.4f}"
-            )
-
-        # Filter only available users
-        available = [r for r in results if r.available]
-
-        return AvailabilityResponse(
-            available_users=available,
-            summary={
-                "total_checked": len(results),
-                "available_count": len(available),
-                "unavailable_count": len(results) - len(available),
-            }
-        )
-    except Exception as exc:
-        logger.error("Availability prediction failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Prediction service failed. Please try again later."
-        )

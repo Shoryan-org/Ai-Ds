@@ -38,6 +38,7 @@ import sys
 import uuid
 from typing import Optional, List
 
+from typing import Optional
 import joblib
 import pandas as pd
 
@@ -75,6 +76,9 @@ os.chdir(_PROJECT_ROOT)
 
 _pipeline = None          # GenerationPipeline instance
 _memory = None            # SessionMemory instance (shared across requests)
+_availability_model = joblib.load(
+    os.path.join(_PROJECT_ROOT, "model", "random_forest_model.pkl")
+)
 
 
 def _read_key_from_file(filename: str) -> Optional[str]:
