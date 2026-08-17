@@ -38,7 +38,6 @@ import sys
 import uuid
 from typing import Optional, List
 
-from typing import Optional
 import joblib
 import pandas as pd
 
@@ -76,9 +75,6 @@ os.chdir(_PROJECT_ROOT)
 
 _pipeline = None          # GenerationPipeline instance
 _memory = None            # SessionMemory instance (shared across requests)
-_availability_model = joblib.load(
-    os.path.join(_PROJECT_ROOT, "model", "random_forest_model.pkl")
-)
 
 
 def _read_key_from_file(filename: str) -> Optional[str]:
@@ -243,10 +239,12 @@ def _load_availability_model():
     if _feature_columns is None:
         if not os.path.exists(_FEATURES_PATH):
             raise RuntimeError(
-                f"Feature columns not found at {_FEATURES_PATH}")
+                f"Feature columns not found at {_FEATURES_PATH}"
+            )
         _feature_columns = joblib.load(_FEATURES_PATH)
         logger.info(
-            f"Feature columns loaded ({len(_feature_columns)} columns).")
+            f"Feature columns loaded ({len(_feature_columns)} columns)."
+        )
     return _availability_model, _feature_columns
 
 
@@ -282,8 +280,14 @@ def _preprocess_user(user: "UserAvailabilityRequest") -> pd.DataFrame:
     df = pd.DataFrame([data])
 
     # Apply one-hot encoding (drop_first=True, same as notebook)
-    categorical_cols = ["Gender", "Blood_Group",
-                        "City", "State", "Country", "Donation_Center"]
+    categorical_cols = [
+        "Gender",
+        "Blood_Group",
+        "City",
+        "State",
+        "Country",
+        "Donation_Center",
+    ]
     for col in categorical_cols:
         df[col] = df[col].astype(str)
     df_encoded = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
@@ -302,7 +306,9 @@ def _preprocess_user(user: "UserAvailabilityRequest") -> pd.DataFrame:
     return df_encoded
 
 
-def check_availability(users: List["UserAvailabilityRequest"]) -> List["UserAvailabilityResponse"]:
+def check_availability(
+    users: List["UserAvailabilityRequest"],
+) -> List["UserAvailabilityResponse"]:
     """
     Predict availability for a list of users and return detailed results.
     Uses probability threshold (>= 0.5) to determine availability.
@@ -327,16 +333,14 @@ def check_availability(users: List["UserAvailabilityRequest"]) -> List["UserAvai
             # Probability of being available (class 'Yes')
             prob_yes = probs[yes_idx]
 
-            # --- FIX: Use threshold instead of predict() ---
-            # If probability of "Yes" >= 0.5, consider them available
+            # Use threshold instead of predict()
             available = prob_yes >= 0.5
-            # --- End fix ---
 
             results.append(
                 UserAvailabilityResponse(
                     user=user,
                     available=available,
-                    probability=float(prob_yes)
+                    probability=float(prob_yes),
                 )
             )
         except Exception as e:
@@ -345,7 +349,7 @@ def check_availability(users: List["UserAvailabilityRequest"]) -> List["UserAvai
                 UserAvailabilityResponse(
                     user=user,
                     available=False,
-                    probability=0.0
+                    probability=0.0,
                 )
             )
 
