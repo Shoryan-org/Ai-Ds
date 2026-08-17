@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
-# Request
+# Chat Request / Response
 # ---------------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
@@ -34,10 +34,6 @@ class ChatRequest(BaseModel):
     )
 
 
-# ---------------------------------------------------------------------------
-# Citation (mirrors what the context layer actually returns)
-# ---------------------------------------------------------------------------
-
 class Citation(BaseModel):
     """A single source citation returned by the retrieval / context layer."""
 
@@ -46,12 +42,9 @@ class Citation(BaseModel):
     section: Optional[str] = None
     score: Optional[float] = None
 
-    model_config = {"extra": "allow"}   # tolerate extra fields from the pipeline
+    # tolerate extra fields from the pipeline
+    model_config = {"extra": "allow"}
 
-
-# ---------------------------------------------------------------------------
-# Response
-# ---------------------------------------------------------------------------
 
 class ChatResponse(BaseModel):
     """Response returned by POST /chat."""
@@ -82,3 +75,48 @@ class HealthResponse(BaseModel):
     """Response returned by GET /health."""
 
     status: str = "ok"
+
+
+# ---------------------------------------------------------------------------
+# Prediction / Availability
+# ---------------------------------------------------------------------------
+
+class UserAvailabilityRequest(BaseModel):
+    """Single donor profile for availability prediction."""
+
+    age: int = Field(..., ge=16, le=100, example=30)
+    total_donations: int = Field(..., ge=0, example=2)
+    weight_kg: float = Field(..., ge=40, le=200, example=70.5)
+    hemoglobin_g_dL: float = Field(..., ge=8, le=20, example=14.2)
+    gender: str = Field(..., example="Male")
+    blood_group: str = Field(..., example="O+")
+    city: str = Field(..., example="Cairo")
+    state: str = Field(..., example="Cairo")
+    donation_center: str = Field(..., example="Egyptian Red Crescent")
+    country: str = Field(default="Egypt", example="Egypt")
+
+
+class AvailabilityRequest(BaseModel):
+    """Request containing a list of donor profiles."""
+
+    users: List[UserAvailabilityRequest]
+
+
+class UserAvailabilityResponse(BaseModel):
+    """Prediction result for a single donor."""
+
+    user: UserAvailabilityRequest
+    available: bool = Field(..., description="True if predicted as available.")
+    probability: float = Field(
+        ..., ge=0.0, le=1.0, description="Probability of being available (class 1)."
+    )
+
+
+class AvailabilityResponse(BaseModel):
+    """Response returning only the available users with their probabilities."""
+
+    available_users: List[UserAvailabilityResponse]
+    summary: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="Optional summary statistics (total_checked, available_count, unavailable_count)."
+    )

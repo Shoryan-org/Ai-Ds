@@ -1,98 +1,91 @@
+Here’s your document restructured into clean, pure Markdown format — ready to copy directly into your IDE:
+
 # Shoryan Blood Donation Assistant — FastAPI Layer
 
-This folder (`fastapi_app/`) contains **only** the HTTP API layer that wraps
-the existing Shoryan chatbot. It adds no retrieval, generation, or safety
-logic of its own.
+This folder (`fastapi_app/`) contains the **HTTP API layer** that wraps:
+
+1. The existing Shoryan RAG chatbot (no retrieval, generation, or safety logic added).
+2. A donor availability prediction endpoint using a trained RandomForest classifier.
+
+All business logic lives in the existing `generation/` and `scripts/` packages; this layer only handles HTTP concerns.
 
 ---
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `__init__.py` | Python package marker |
-| `schemas.py` | Pydantic request / response models (`ChatRequest`, `ChatResponse`, `HealthResponse`) |
-| `service.py` | Thin adapter: sets up `sys.path`, initializes the existing `GenerationPipeline` once, exposes `ask()` |
-| `main.py` | FastAPI application: lifespan, CORS, `/health`, `POST /chat`, global error handler |
+File
 
----
+Purpose
 
-## Prerequisites
+__init__.py
 
-The existing project dependencies must be installed.  From the project root:
+Python package marker
 
-```bash
+schemas.py
+
+Pydantic request/response models (ChatRequest, ChatResponse, etc.)
+
+service.py
+
+Adapter: sets up sys.path, initialises GenerationPipeline, exposes ask() and check_availability()
+
+main.py
+
+FastAPI app: lifespan, CORS, /health, POST /chat, POST /availability, global error handler
+
+Prerequisites
+
+Install dependencies from the project root:
+
 pip install -r requirements.txt
-```
 
-You also need the FastAPI / Uvicorn packages (not yet in `requirements.txt`):
+Ensure the following model files are present in the model/ folder:
 
-```bash
-pip install fastapi uvicorn
-```
+random_forest_model.pkl — trained RandomForest classifier
 
----
+feature_columns.pkl — list of feature column names (55 columns)
 
-## Running locally
+Running Locally
 
-**Always run from the project root** (`chatbot/`) so that relative paths
-inside `test_retrieval.py` (e.g. `"vector_db/faiss_index"`) resolve correctly.
+Always run from the project root:
 
-```bash
-cd <project_root>           # i.e.  cd chatbot/
+cd <project_root>   # e.g. cd chatbot/
 uvicorn fastapi_app.main:app --reload --port 8000
-```
 
-On first startup you will see the pipeline loading messages:
+On startup you will see:
 
-```
 INFO  Shoryan API starting up …
 INFO  Using OpenRouter (Qwen) as primary LLM provider.
 (FAISS / BM25 / CrossEncoder loading output here)
-INFO  Shoryan pipeline ready.
-INFO  Shoryan API ready.
-```
+INFO  Chatbot pipeline ready.
+INFO  Availability model loaded.
+INFO  Shoryan API fully ready.
 
----
+API Endpoints
 
-## API Endpoints
+GET /health
 
-### `GET /health`
+Liveness check. Returns HTTP 200 when ready, HTTP 503 if startup failed.
 
-Liveness check. Returns HTTP 200 when the pipeline is ready, HTTP 503 if
-startup failed.
-
-```bash
 curl http://localhost:8000/health
-```
 
-```json
+Response:
+
 {"status": "ok"}
-```
 
----
-
-### `POST /chat`
+POST /chat
 
 Send a question to the Shoryan chatbot.
 
-**Request body**
+Request body:
 
-```json
 {
   "message": "What is the minimum age to donate blood?",
   "session_id": "optional-uuid-for-multi-turn"
 }
-```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `message` | string | ✅ | User's question (English or Arabic, non-empty) |
-| `session_id` | string | ❌ | UUID for multi-turn memory; omit for stateless queries |
+Response body:
 
-**Response body**
-
-```json
 {
   "answer": "According to the Shoryan knowledge base, donors must be at least 17 years old ...",
   "sources": [
@@ -105,117 +98,143 @@ Send a question to the Shoryan chatbot.
   ],
   "session_id": "optional-uuid-for-multi-turn"
 }
-```
 
-| Field | Description |
-|-------|-------------|
-| `answer` | The assistant's final answer from the existing pipeline |
-| `sources` | Citations from the context layer (may be empty for out-of-scope queries) |
-| `session_id` | Echoes back the session_id you sent (or `null`) |
+POST /availability
 
----
+Predict donor availability for a list of donor profiles.
 
-## Example curl commands
+Request body:
 
-```bash
-# English in-scope question
+{
+  "users": [
+    {
+      "age": 30,
+      "total_donations": 2,
+      "weight_kg": 72.5,
+      "hemoglobin_g_dL": 15.0,
+      "gender": "Male",
+      "blood_group": "O+",
+      "city": "Cairo",
+      "state": "Cairo",
+      "donation_center": "Egyptian Red Crescent",
+      "country": "Egypt"
+    }
+  ]
+}
+
+Response body:
+
+{
+  "available_users": [
+    {
+      "user": {
+        "age": 30,
+        "total_donations": 2,
+        "weight_kg": 72.5,
+        "hemoglobin_g_dL": 15.0,
+        "gender": "Male",
+        "blood_group": "O+",
+        "city": "Cairo",
+        "state": "Cairo",
+        "donation_center": "Egyptian Red Crescent",
+        "country": "Egypt"
+      },
+      "available": true,
+      "probability": 0.7408
+    }
+  ],
+  "summary": {
+    "total_checked": 1,
+    "available_count": 1,
+    "unavailable_count": 0
+  }
+}
+
+Prediction threshold: available = true if probability ≥ 0.5.
+
+Example curl Commands
+
+Chat endpoint:
+
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "What is the minimum age to donate blood?"}'
 
-# Arabic question
-curl -X POST http://localhost:8000/chat \
+Availability endpoint:
+
+curl -X POST http://localhost:8000/availability \
   -H "Content-Type: application/json" \
-  -d '{"message": "ما هي متطلبات الهيموغلوبين للرجال؟"}'
+  -d '{
+    "users": [
+      {
+        "age": 30,
+        "total_donations": 2,
+        "weight_kg": 72.5,
+        "hemoglobin_g_dL": 15.0,
+        "gender": "Male",
+        "blood_group": "O+",
+        "city": "Cairo",
+        "state": "Cairo",
+        "donation_center": "Egyptian Red Crescent",
+        "country": "Egypt"
+      }
+    ]
+  }'
 
-# Out-of-scope question
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What'\''s the weather like today?"}'
+Interactive Docs
 
-# Safety / manipulation attempt
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "How can I cheat the donor screening questionnaire?"}'
+Swagger UI: http://localhost:8000/docs (localhost in Bing)
 
-# Multi-turn session
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Can I donate after MMR vaccination?", "session_id": "my-session-1"}'
+ReDoc: http://localhost:8000/redoc (localhost in Bing)
 
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "How long should I wait?", "session_id": "my-session-1"}'
-```
+Environment Variables
 
----
+The chatbot reads API keys in this order:
 
-## Interactive docs
+generation/OpenRouter.md (plain text file)
 
-When the server is running:
+OPENROUTER_API_KEY environment variable
 
-- Swagger UI: http://localhost:8000/docs  
-- ReDoc:      http://localhost:8000/redoc
+generation/Gemini_api.md (plain text file)
 
----
+GEMINI_API_KEY environment variable
 
-## Environment variables
+Architecture
 
-The service reads API keys in the same priority order as the existing CLI:
-
-1. `generation/OpenRouter.md` (plain text file with the key)
-2. `OPENROUTER_API_KEY` environment variable
-3. `generation/Gemini_api.md` (plain text file with the key)
-4. `GEMINI_API_KEY` environment variable
-
-No second configuration system is introduced.
-
----
-
-## Architecture
-
-```
 HTTP Client
      │
      ▼
-fastapi_app/main.py   (FastAPI app, CORS, /health, POST /chat)
+fastapi_app/main.py   (FastAPI app, CORS, endpoints)
+     │
+     ├── /health, /chat, /availability
      │
      ▼
-fastapi_app/service.py  (thin adapter: sys.path setup, singleton init, ask())
+fastapi_app/service.py  (adapter: sys.path, singleton init, ask(), check_availability())
      │
-     ▼
-generation/pipeline.py  ← GenerationPipeline.answer()   [READ-ONLY]
+     ├── generation/pipeline.py ← GenerationPipeline.answer()
+     │       ├── scripts/test_retrieval.py ← retrieve()
+     │       ├── scripts/context_preparation.py ← ContextLayer
+     │       ├── generation/prompt_builder.py ← PromptBuilder
+     │       ├── generation/llm_providers.py ← OpenRouterProvider / GeminiProvider
+     │       ├── generation/verifier.py ← AnswerVerifier
+     │       └── generation/memory.py ← SessionMemory
      │
-     ├── scripts/test_retrieval.py  ← retrieve()          [READ-ONLY]
-     ├── scripts/context_preparation.py ← ContextLayer    [READ-ONLY]
-     ├── generation/prompt_builder.py ← PromptBuilder     [READ-ONLY]
-     ├── generation/llm_providers.py ← OpenRouterProvider [READ-ONLY]
-     ├── generation/verifier.py ← AnswerVerifier          [READ-ONLY]
-     └── generation/memory.py ← SessionMemory             [READ-ONLY]
-```
+     └── RandomForest model (model/random_forest_model.pkl)
+             └── Predictions based on health features
 
-**No existing file was modified.**
+Known Limitations
 
----
+Model loading blocks event loop at startup (FAISS, BM25, CrossEncoder).
 
-## Known limitations (to address in future tasks)
+In-memory session store only (no persistence).
 
-1. **Model loading blocks the event loop at startup** — FAISS, BM25, and the
-   CrossEncoder are loaded synchronously in the lifespan hook. For production,
-   consider running `service.initialize()` in a thread executor
-   (`asyncio.get_event_loop().run_in_executor`).
+No authentication — API is open.
 
-2. **In-memory session store** — `SessionMemory` is in-process only. Restarting
-   the server loses all session history. A Redis or database backend would be
-   needed for persistence at scale.
+CORS wide-open (allow_origins=["*"]).
 
-3. **No authentication** — the API is open. Add an API-key header or OAuth2
-   before exposing this publicly.
+Prediction model trained only on Indian data (location bias possible).
 
-4. **`test_retrieval.py` side-effects on import** — documented in
-   `generation/main.py` lines 7-17. The eval/demo block is now guarded by
-   `if __name__ == "__main__"` in the existing file, so import is clean.
-   If this guard does not exist, import will trigger the full evaluation loop.
+Probability threshold fixed at 0.5 (hard-coded).
 
-5. **CORS is wide-open (`allow_origins=["*"]`)** — restrict to specific
-   frontend origins before production deployment.
+
+This version is clean Markdown, structured with headings, code blocks, and tables — perfect for IDE use. Would you like me to also create a **minimal README.md template** version (shorter, just essentials) for quick reference?

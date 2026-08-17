@@ -3,11 +3,13 @@ FastAPI application — Shoryan Blood Donation Assistant API.
 
 Endpoints
 ---------
-GET  /health   — liveness check; does NOT re-initialize the pipeline.
-POST /chat     — accepts a user message, returns the chatbot's answer.
+GET  /health       — liveness check; does NOT re-initialize the pipeline.
+POST /chat         — accepts a user message, returns the chatbot's answer.
+POST /availability — accepts a list of donor profiles, returns predicted availability.
 
 The application is deliberately thin:
   - All chatbot logic lives in the existing generation/ and scripts/ packages.
+  - Prediction logic is in service.py.
   - This module only handles HTTP concerns: routing, serialization, CORS,
     error handling, and startup/shutdown lifecycle.
 
@@ -31,7 +33,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from fastapi_app import service
-from fastapi_app.schemas import ChatRequest, ChatResponse, Citation, HealthResponse
+from fastapi_app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    Citation,
+    HealthResponse,
+    AvailabilityRequest,
+    AvailabilityResponse,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -45,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Lifespan — initialize the pipeline ONCE at startup
+# Lifespan — initialize the pipeline and prediction model ONCE at startup
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
@@ -54,18 +63,25 @@ async def lifespan(app: FastAPI):
     FastAPI lifespan context manager.
 
     Startup:  initialize the Shoryan pipeline (loads FAISS index, BM25,
-              CrossEncoder, LLM provider).  This runs once; subsequent
-              requests reuse the same objects.
+              CrossEncoder, LLM provider) and the availability prediction model.
+              This runs once; subsequent requests reuse the same objects.
 
     Shutdown: nothing to clean up (in-memory only).
     """
     logger.info("=== Shoryan API starting up … ===")
     try:
+        # 1. Chatbot pipeline
         service.initialize()
-        logger.info("=== Shoryan API ready. ===")
+        logger.info("Chatbot pipeline ready.")
+
+        # 2. Availability prediction model
+        service._load_availability_model()
+        logger.info("Availability model ready.")
+
+        logger.info("=== Shoryan API fully ready. ===")
     except Exception as exc:
         # Log but do not crash the process — /health will report not-ready.
-        logger.error("Pipeline initialization failed: %s", exc, exc_info=True)
+        logger.error("Startup initialization failed: %s", exc, exc_info=True)
     yield
     logger.info("=== Shoryan API shutting down. ===")
 
@@ -77,9 +93,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Shoryan Blood Donation Assistant API",
     description=(
-        "REST API wrapper around the Shoryan RAG chatbot. "
-        "Supports English and Arabic questions about blood donation eligibility, "
-        "safety, procedures, and related topics."
+        "REST API wrapper around the Shoryan RAG chatbot, plus a donor "
+        "availability prediction endpoint using a RandomForest classifier."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -130,9 +145,71 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal server error occurred. Please try again later."},
+        content={
+            "detail": "An internal server error occurred. Please try again later."
+        },
     )
 
+
+@app.get(
+    "/",
+    summary="API Root",
+    tags=["Utility"],
+    include_in_schema=True
+)
+async def root():
+    """
+    Shoryan Blood Donation Assistant API root endpoint.
+    
+    Returns API metadata and links to available endpoints and documentation.
+    """
+    return {
+        "name": "Shoryan Blood Donation Assistant API",
+        "version": "1.0.0",
+        "description": (
+            "REST API wrapper around the Shoryan RAG chatbot, plus a donor "
+            "availability prediction endpoint using a RandomForest classifier."
+        ),
+        "endpoints": {
+            "/health": {
+                "method": "GET",
+                "description": "Liveness check. Returns 200 when ready, 503 if not."
+            },
+            "/chat": {
+                "method": "POST",
+                "description": "Send a question to the Shoryan chatbot (English or Arabic).",
+                "request_body": {
+                    "message": "Your question (string)",
+                    "session_id": "Optional UUID for multi-turn conversations"
+                }
+            },
+            "/availability": {
+                "method": "POST",
+                "description": "Predict donor availability for a list of donor profiles.",
+                "request_body": {
+                    "users": [
+                        {
+                            "age": "int (16-100)",
+                            "total_donations": "int (≥ 0)",
+                            "weight_kg": "float (40-200)",
+                            "hemoglobin_g_dL": "float (8-20)",
+                            "gender": "string (Male/Female)",
+                            "blood_group": "string (e.g., O+, A-)",
+                            "city": "string",
+                            "state": "string",
+                            "donation_center": "string",
+                            "country": "string (default: Egypt)"
+                        }
+                    ]
+                }
+            }
+        },
+        "docs": {
+            "swagger_ui": "/docs",
+            "redoc": "/redoc"
+        },
+        "status": "online"
+    }
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -233,3 +310,52 @@ async def chat(request: ChatRequest) -> ChatResponse:
         sources=citations,
         session_id=result.session_id,
     )
+
+
+@app.post(
+    "/availability",
+    response_model=AvailabilityResponse,
+    summary="Check blood donation availability for multiple donors",
+    tags=["Availability"],
+)
+async def availability(request: AvailabilityRequest) -> AvailabilityResponse:
+    """
+    Accepts a list of donor profiles and returns:
+    - The list of users predicted as available, each with their probability.
+    - Optional summary statistics.
+
+    The prediction uses a RandomForest classifier trained on historical donor data.
+
+    **Debug Note**: If you get unexpected predictions (e.g., all unavailable),
+    check the server logs – they will show the probability for each user.
+    This is often due to the model being trained on Indian data; Egyptian
+    locations (Cairo, Alexandria) do not exist in the training set, causing
+    all location features to be 0, which may lead to a lower probability.
+    """
+    try:
+        results = service.check_availability(request.users)
+
+        # Log each prediction for debugging (probabilities and availability)
+        for r in results:
+            logger.info(
+                f"Prediction: age={r.user.age}, Hb={r.user.hemoglobin_g_dL}, "
+                f"city={r.user.city}, available={r.available}, prob={r.probability:.4f}"
+            )
+
+        # Filter only available users
+        available = [r for r in results if r.available]
+
+        return AvailabilityResponse(
+            available_users=available,
+            summary={
+                "total_checked": len(results),
+                "available_count": len(available),
+                "unavailable_count": len(results) - len(available),
+            }
+        )
+    except Exception as exc:
+        logger.error("Availability prediction failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Prediction service failed. Please try again later."
+        )

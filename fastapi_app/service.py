@@ -9,6 +9,7 @@ Responsibilities of THIS module:
      a single GenerationPipeline instance at application startup.
   3. Expose a single public function — `ask(message, session_id)` — that
      calls pipeline.answer() and returns the result.
+  4. Load the RandomForest availability model and provide prediction.
 
 This module does NOT implement:
   - retrieval
@@ -35,7 +36,10 @@ import logging
 import os
 import sys
 import uuid
-from typing import Optional
+from typing import Optional, List
+
+import joblib
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +51,13 @@ logger = logging.getLogger(__name__)
 #                      <project_root>/scripts/       (test_retrieval, context_preparation)
 #                      <project_root>/               (project root itself)
 
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))           # .../fastapi_app
+_THIS_DIR = os.path.dirname(os.path.abspath(
+    __file__))           # .../fastapi_app
 _PROJECT_ROOT = os.path.dirname(_THIS_DIR)                       # .../chatbot
-_GENERATION_DIR = os.path.join(_PROJECT_ROOT, "generation")      # .../chatbot/generation
-_SCRIPTS_DIR = os.path.join(_PROJECT_ROOT, "scripts")            # .../chatbot/scripts
+_GENERATION_DIR = os.path.join(
+    _PROJECT_ROOT, "generation")      # .../chatbot/generation
+# .../chatbot/scripts
+_SCRIPTS_DIR = os.path.join(_PROJECT_ROOT, "scripts")
 
 for _p in (_PROJECT_ROOT, _GENERATION_DIR, _SCRIPTS_DIR):
     if _p not in sys.path:
@@ -61,7 +68,7 @@ for _p in (_PROJECT_ROOT, _GENERATION_DIR, _SCRIPTS_DIR):
 os.chdir(_PROJECT_ROOT)
 
 # ---------------------------------------------------------------------------
-# Lazy pipeline singleton
+# Lazy pipeline singleton (chatbot)
 # ---------------------------------------------------------------------------
 # Initialized exactly once during application startup (see lifespan in
 # fastapi_app/main.py).  Never initialized per-request.
@@ -208,3 +215,134 @@ def ask(message: str, session_id: Optional[str] = None):
     effective_session_id = session_id or str(uuid.uuid4())
 
     return _pipeline.answer(message, session_id=effective_session_id)
+
+
+# ---------------------------------------------------------------------------
+# Availability Prediction (RandomForest model)
+# ---------------------------------------------------------------------------
+
+_MODEL_PATH = os.path.join(_PROJECT_ROOT, "model", "random_forest_model.pkl")
+_FEATURES_PATH = os.path.join(_PROJECT_ROOT, "model", "feature_columns.pkl")
+
+_availability_model = None
+_feature_columns = None
+
+
+def _load_availability_model():
+    """Lazy-load the RandomForest model and the feature column list."""
+    global _availability_model, _feature_columns
+    if _availability_model is None:
+        if not os.path.exists(_MODEL_PATH):
+            raise RuntimeError(f"Model not found at {_MODEL_PATH}")
+        _availability_model = joblib.load(_MODEL_PATH)
+        logger.info("Availability model loaded.")
+    if _feature_columns is None:
+        if not os.path.exists(_FEATURES_PATH):
+            raise RuntimeError(
+                f"Feature columns not found at {_FEATURES_PATH}")
+        _feature_columns = joblib.load(_FEATURES_PATH)
+        logger.info(
+            f"Feature columns loaded ({len(_feature_columns)} columns).")
+    return _availability_model, _feature_columns
+
+
+def _preprocess_user(user: "UserAvailabilityRequest") -> pd.DataFrame:
+    """
+    Convert a single user to a DataFrame with the exact same columns
+    as the training set, using one‑hot encoding and filling missing columns.
+
+    The training set contained features: Age, Total_Donations, Weight_kg,
+    Hemoglobin_g_dL, and one-hot encoded categoricals: Gender, Blood_Group,
+    City, State, Country, Donation_Center (with drop_first=True).
+    """
+    # Override location to a fixed Indian location
+    # This removes location variance from predictions
+    FIXED_CITY = "Mumbai"
+    FIXED_STATE = "Maharashtra"
+    FIXED_DONATION_CENTER = "Red Cross Blood Bank"
+    FIXED_COUNTRY = "India"
+
+    # Build the data dict with overridden location
+    data = {
+        "Age": user.age,
+        "Total_Donations": user.total_donations,
+        "Weight_kg": user.weight_kg,
+        "Hemoglobin_g_dL": user.hemoglobin_g_dL,
+        "Gender": user.gender,
+        "Blood_Group": user.blood_group,
+        "City": FIXED_CITY,
+        "State": FIXED_STATE,
+        "Country": FIXED_COUNTRY,
+        "Donation_Center": FIXED_DONATION_CENTER,
+    }
+    df = pd.DataFrame([data])
+
+    # Apply one-hot encoding (drop_first=True, same as notebook)
+    categorical_cols = ["Gender", "Blood_Group",
+                        "City", "State", "Country", "Donation_Center"]
+    for col in categorical_cols:
+        df[col] = df[col].astype(str)
+    df_encoded = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+
+    # Get the feature columns from training
+    _, feature_cols = _load_availability_model()
+
+    # Ensure all training columns are present; fill missing with 0
+    for col in feature_cols:
+        if col not in df_encoded.columns:
+            df_encoded[col] = 0
+
+    # Reorder columns to match the training order exactly
+    df_encoded = df_encoded[feature_cols]
+
+    return df_encoded
+
+
+def check_availability(users: List["UserAvailabilityRequest"]) -> List["UserAvailabilityResponse"]:
+    """
+    Predict availability for a list of users and return detailed results.
+    Uses probability threshold (>= 0.5) to determine availability.
+    """
+    from fastapi_app.schemas import UserAvailabilityResponse
+
+    model, _ = _load_availability_model()
+
+    # Determine which class index corresponds to "Yes" (available)
+    try:
+        yes_idx = list(model.classes_).index("Yes")
+    except ValueError:
+        yes_idx = 1
+    logger.info(f"Model classes: {model.classes_}, 'Yes' index = {yes_idx}")
+
+    results = []
+    for user in users:
+        try:
+            X = _preprocess_user(user)
+            # Get probability for each class
+            probs = model.predict_proba(X)[0]
+            # Probability of being available (class 'Yes')
+            prob_yes = probs[yes_idx]
+
+            # --- FIX: Use threshold instead of predict() ---
+            # If probability of "Yes" >= 0.5, consider them available
+            available = prob_yes >= 0.5
+            # --- End fix ---
+
+            results.append(
+                UserAvailabilityResponse(
+                    user=user,
+                    available=available,
+                    probability=float(prob_yes)
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error predicting for user {user}: {e}")
+            results.append(
+                UserAvailabilityResponse(
+                    user=user,
+                    available=False,
+                    probability=0.0
+                )
+            )
+
+    return results
