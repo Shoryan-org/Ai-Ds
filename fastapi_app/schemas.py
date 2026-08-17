@@ -84,6 +84,10 @@ class HealthResponse(BaseModel):
 class UserAvailabilityRequest(BaseModel):
     """Single donor profile for availability prediction."""
 
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Optional user identifier to match predictions to database records."
+    )
     age: int = Field(..., ge=16, le=100, example=30)
     total_donations: int = Field(..., ge=0, example=2)
     weight_kg: float = Field(..., ge=40, le=200, example=70.5)
@@ -116,6 +120,10 @@ class AvailabilityResponse(BaseModel):
     """Response returning only the available users with their probabilities."""
 
     available_users: List[UserAvailabilityResponse]
+    available_ids: Optional[List[str]] = Field(
+        default=None,
+        description="List of user IDs of the available users (for easy integration)."
+    )
     summary: Optional[Dict[str, int]] = Field(
         default=None,
         description="Optional summary statistics (total_checked, available_count, unavailable_count)."
